@@ -1,0 +1,8 @@
+Q: How do I reset my password?
+A: Click on 'Forgot Password' at the login page, enter your registered email, and follow the instructions sent to your inbox.
+
+Q: How do I update my profile information?
+A: Go to 'Account Settings', select 'Profile', and edit your details such as name, email, or phone number.
+
+Q: How can I contact customer support?
+A: You can contact support by clicking on 'Help' in the app, or by emailing support@example.com.

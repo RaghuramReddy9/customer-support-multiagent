@@ -1,0 +1,8 @@
+Q: The app is not loading. What should I do?
+A: Try clearing your browser cache or restarting the app. If the issue persists, check your internet connection.
+
+Q: The app crashed. How can I report it?
+A: Go to the Help menu, select 'Report a Bug', and fill in the crash details including screenshots if possible.
+
+Q: I cannot install the update. What should I do?
+A: Ensure you have enough disk space, stable internet, and the required OS version before retrying the update.

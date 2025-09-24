@@ -1,0 +1,8 @@
+Q: What should I do if I was double charged?
+A: Contact customer support with your billing ID. Refunds are typically processed within 5 business days.
+
+Q: How can I update my billing information?
+A: Go to the account settings page, select 'Billing Info', and update your payment details.
+
+Q: What happens if my payment fails?
+A: The system will retry your payment in 24 hours. If it still fails, your account may be paused until updated.
