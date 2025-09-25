@@ -38,6 +38,7 @@ The bot automatically **routes queries** to the correct specialist (Billing, Tec
 ---
 
 <details>
+
 <summary> Getting Started </summary>
 
 ### 1. Clone the Repo
@@ -68,6 +69,10 @@ App will be available at → http://localhost:8501
 
 </details>
 
+---
+
+<details>
+
 <details> <summary> Project Structure </summary>
 
 customer-support-multiagent/
@@ -85,11 +90,21 @@ customer-support-multiagent/
 
 </details>
 
+---
+
+<details>
+
 <details> <summary> Screenshots </summary>
-Multi-Agent Chat in Action
+
+![App Screenshot](assets/demo.png)
 </details>
 
+---
+
+<details>
+
 <details> <summary> Future Enhancements </summary>
+
 • Add Agent-to-Agent collaboration (specialists ask clarifying questions).
 
 • Deploy to Hugging Face Spaces / AWS with Docker.
@@ -97,9 +112,13 @@ Multi-Agent Chat in Action
 • Extend knowledge bases with real company docs.
 
 • Add analytics dashboard for routed queries (Billing vs Tech vs General).
+
 </details>
+---
+<details>
 
 <details> <summary> Tech Stack </summary>
+
 • LLM: Gemini 1.5 Flash (Google GenAI)
 
 • Framework: LangGraph + LangChain
@@ -109,7 +128,10 @@ Multi-Agent Chat in Action
 • Frontend: Streamlit
 
 • Deployment: Docker-ready
+
 </details>
+---
+<details>
 
 <details> <summary> Author </summary>
 👤 Raghuramreddy Thirumalareddy
