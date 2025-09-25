@@ -73,7 +73,7 @@ App will be available at → http://localhost:8501
 
 <details>
 
-<details> <summary> Project Structure </summary>
+<summary> Project Structure </summary>
 
 customer-support-multiagent/
 │── app.py                    # Streamlit UI
@@ -94,16 +94,17 @@ customer-support-multiagent/
 
 <details>
 
-<details> <summary> Screenshots </summary>
+<summary> Screenshots </summary>
 
 ![App Screenshot](assets/demo.png)
+
 </details>
 
 ---
 
 <details>
 
-<details> <summary> Future Enhancements </summary>
+<summary> Future Enhancements </summary>
 
 • Add Agent-to-Agent collaboration (specialists ask clarifying questions).
 
@@ -114,10 +115,12 @@ customer-support-multiagent/
 • Add analytics dashboard for routed queries (Billing vs Tech vs General).
 
 </details>
+
 ---
+
 <details>
 
-<details> <summary> Tech Stack </summary>
+<summary> Tech Stack </summary>
 
 • LLM: Gemini 1.5 Flash (Google GenAI)
 
@@ -130,10 +133,12 @@ customer-support-multiagent/
 • Deployment: Docker-ready
 
 </details>
+
 ---
+
 <details>
 
-<details> <summary> Author </summary>
+<summary> Author </summary>
 👤 Raghuramreddy Thirumalareddy
 
 • GitHub--> https://github.com/RaghuramReddy9
