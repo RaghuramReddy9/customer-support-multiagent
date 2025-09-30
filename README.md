@@ -33,6 +33,11 @@ The bot automatically **routes queries** to the correct specialist (Billing, Tec
 - **Specialist Agents** – provide grounded responses using **RAG** over department-specific FAQs.  
 - **Streamlit** – delivers a conversational interface.  
 
+- **Clarification Flow**:  
+  - Billing Specialist asks if the user means “overcharge” vs “double charge”.  
+  - Tech Specialist asks if the app issue is a crash, freeze, or startup problem.  
+  - Makes the bot feel more human-like by handling vague queries before answering.
+
 </details>
 
 ---
