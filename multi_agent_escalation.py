@@ -24,35 +24,35 @@ class EscalationState(TypedDict):
 
 # Router agent (decides which department should handle the query)
 router_agent = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-001",
     google_api_key=GOOGLE_API_KEY,
     temperature=0  # deterministic output (no creativity)
 )
 
 # Frontline agent (triage only)
 frontline_agent = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-001",
     google_api_key=GOOGLE_API_KEY,
     temperature=0.3   # slightly more creative for first contact
 )
 
 # Billing specialist (must be precise)
 billing_agent = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-001",
     google_api_key=GOOGLE_API_KEY,
     temperature=0.0   # strict, accurate answers
 )
 
 # Tech specialist (helpful troubleshooting)
 tech_agent = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-001",
     google_api_key=GOOGLE_API_KEY,
     temperature=0.2   # mostly accurate but allows small flexibility
 )
 
 # General FAQ specialist (friendly)
 general_agent = ChatGoogleGenerativeAI(
-    model="gemini-1.5-flash",
+    model="gemini-2.0-flash-001",
     google_api_key=GOOGLE_API_KEY,
     temperature=0.5   # more conversational
 )
@@ -79,6 +79,15 @@ general_chunks = splitter.split_documents(general_loader.load())
 general_vectorstore = Chroma.from_documents(general_chunks, embedding=embeddings)
 general_retriever = general_vectorstore.as_retriever(search_kwargs={"k": 2})
 
+# define frontline node function
+def frontline_node(state: EscalationState):
+    user_query = state["query"]
+    reply = frontline_agent.invoke(
+        f"You are a frontline customer support assistant. Greet the user and route their issue: {user_query}"
+    ).content
+    state["response"] = reply
+    return state
+
 # Define Agent Node Functions
 def router_node(state: EscalationState):
     user_query = state["query"]
@@ -95,41 +104,58 @@ def router_node(state: EscalationState):
 
     Query: {user_query}
     """
-
     decision = router_agent.invoke(prompt).content.strip().lower()
     state["route"] = decision
     return state
 
-def frontline_node(state: EscalationState):
-    """Frontline agent greets and triages only, doesn’t solve issues."""
-    user_query = state["query"]
-    reply = frontline_agent.invoke(
-        f"You are a frontline customer support assistant. Greet the user and route their issue: {user_query}"
-    ).content
-    state["response"] = reply
-    return state
-
 def billing_node(state: EscalationState):
-    """Billing specialist uses RAG over billing_faq.txt"""
-    user_query = state["query"]
-    docs = billing_retriever.invoke(user_query)
-    context = "\n".join([d.page_content for d in docs])
+    q = state["query"].lower()    
+    if "charge" in q and "double" not in q:
+        return {
+            "query": state["query"],
+            "response": "Do you mean an overcharge on your monthly bill or a one-time double charge?",
+            "escalated": True,
+            "route": "clarify"
+        }
+    else:
+        # Normal response using billing_faq
+        docs = billing_retriever.invoke(state["query"])
+        context = "\n".join([d.page_content for d in docs])
+        prompt = f"""
+        You are a billing specialist. Use the following FAQs to answer:
 
-    prompt = f"""
-    You are a billing support specialist.
-    Use the following billing FAQs to answer the question.
+        Context:
+        {context}
 
-    Context:
-    {context}
-
-    Question: {user_query}
-    """
-    reply = billing_agent.invoke(prompt).content
-    state["response"] = reply
-    return state
+        Question: {state["query"]}
+        """
+        reply = billing_agent.invoke(prompt).content
+        return {
+            "query": state["query"],
+            "response": reply,
+            "escalated": True,
+            "route": "end"
+        }
+     
+def clarify_node(state: EscalationState):
+    return {
+        "query": state["query"],
+        "response": state["response"],  # send specialist's clarifying question back to user
+        "escalated": True,
+        "route": "end",
+    }
 
 def tech_node(state: EscalationState):
-    """Tech specialist uses RAG over tech_faq.txt"""
+    q = state["query"].lower()
+    # Detect vague quety -> ask for clarification
+    if "app is not working" in q or "issue" in q or "problem" in q:
+        return {
+        "query": state["query"],
+        "response" : "Can you clarify the issue? Is the app crashing on startup, freezing during use, or not opening at all?",
+        "escalated": True,
+        "route": "clarify"
+        }
+    # Normal RAG response using tech_faq
     user_query = state["query"]
     docs = tech_retriever.invoke(user_query)
     context = "\n".join([d.page_content for d in docs])
@@ -174,28 +200,32 @@ graph.add_node("router", router_node)
 graph.add_node("billing", billing_node)
 graph.add_node("tech", tech_node)
 graph.add_node("general", general_node)
+graph.add_node("clarify", clarify_node)
 
+# Define entry point
 graph.set_entry_point("frontline")
 
 # Routing from frontline to router
 graph.add_edge("frontline", "router")
 
-# Router output → specialist agents
 graph.add_conditional_edges(
     "router",
     lambda state: state["route"],
-    {"billing": "billing", "tech": "tech", "general": "general"}
+    {"billing": "billing", "tech": "tech", "general": "general", "clarify": "clarify"},
 )
 
-# Specialist agents → END
+graph.add_edge("billing", "clarify")  # billing can loop to clarify
+graph.add_edge("tech", "clarify")
 graph.add_edge("billing", END)
 graph.add_edge("tech", END)
 graph.add_edge("general", END)
+graph.add_edge("clarify", END)  
 
+# Compile the graph into an executable app
 app = graph.compile()
 
 # Run the Bot
 if __name__ == "__main__":
     query = input("User: ")
-    result = app.invoke({"query": query, "response": "", "escalated": False})
+    result = app.invoke({"query": query, "response": "", "escalated": False, "route": ""})
     print("Bot:", result["response"])
