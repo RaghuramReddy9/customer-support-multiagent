@@ -1,4 +1,5 @@
 import os
+import json    
 from dotenv import load_dotenv
 from typing import TypedDict
 from langgraph.graph import StateGraph, END
@@ -15,46 +16,38 @@ GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 # Define State Structure
 
 class EscalationState(TypedDict):
-    query: str       # the user’s input
-    response: str    # the agent’s reply
-    escalated: bool  # whether query was escalated or not
-    route: str      # which department handled the query
+    query: str        # the user’s input
+    response: str     # the agent’s reply
+    escalated: bool   # whether query was escalated or not
+    route: str        # which department handled the query
+    confidence: float   # confidence score (if applicable)
+    route_history: list[str]  # history of departments involved
 
 ## Define Agents (Gemini models, explicit per role)
 
 # Router agent (decides which department should handle the query)
 router_agent = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-001",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0  # deterministic output (no creativity)
+    model="gemini-2.0-flash-001", google_api_key=GOOGLE_API_KEY, temperature=0  # deterministic output (no creativity)
 )
 
 # Frontline agent (triage only)
 frontline_agent = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-001",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0.3   # slightly more creative for first contact
+    model="gemini-2.0-flash-001", google_api_key=GOOGLE_API_KEY, temperature=0.3   # slightly more creative for first contact
 )
 
 # Billing specialist (must be precise)
 billing_agent = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-001",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0.0   # strict, accurate answers
+    model="gemini-2.0-flash-001", google_api_key=GOOGLE_API_KEY, temperature=0.0   # strict, accurate answers
 )
 
 # Tech specialist (helpful troubleshooting)
 tech_agent = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-001",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0.2   # mostly accurate but allows small flexibility
+    model="gemini-2.0-flash-001", google_api_key=GOOGLE_API_KEY, temperature=0.2   # mostly accurate but allows small flexibility
 )
 
 # General FAQ specialist (friendly)
 general_agent = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash-001",
-    google_api_key=GOOGLE_API_KEY,
-    temperature=0.5   # more conversational
+    model="gemini-2.0-flash-001", google_api_key=GOOGLE_API_KEY, temperature=0.5   # more conversational
 )
 
 ## Setup RAG Knowledge Bases (Billing, Tech, General)
@@ -88,100 +81,100 @@ def frontline_node(state: EscalationState):
     state["response"] = reply
     return state
 
-# Define Agent Node Functions
+# Define Router Node with confidence + route history
 def router_node(state: EscalationState):
     user_query = state["query"]
 
     prompt = f"""
-    You are a routing agent for a customer support bot.
-    Your job is to classify the query into ONE of three departments:
-
-    - billing → for anything about payments, charges, invoices
-    - tech → for anything about app issues, crashes, installation
-    - general → for everything else (passwords, account updates, contact info)
-
-    Only respond with exactly one word: billing, tech, or general.
+    You are a strict routing agent. Classify the query into ONE of: billing, tech, general.
+    Return strict JSON with keys: route (string), confidence (0.0-1.0 float).
+    Only these routes are allowed.
 
     Query: {user_query}
+    JSON:
     """
-    decision = router_agent.invoke(prompt).content.strip().lower()
-    state["route"] = decision
-    return state
+    raw = router_agent.invoke(prompt).content
+    try:
+        data = json.loads(raw)
+        route = data.get("route", "").strip().lower()
+        conf = float(data.get("confidence", 0.0))
+    except Exception:
+        route, conf = "clarify", 0.0
 
+    if route not in {"billing", "tech", "general"}:
+       route = "clarify"
+
+    # Save to state
+    state["route"] = route
+    state["confidence"] = conf
+    state["route_history"] = (state.get("route_history") or []) + [route]
+    return state     
+
+# Billing node
 def billing_node(state: EscalationState):
-    q = state["query"].lower()    
+    q = state["query"].lower()
     if "charge" in q and "double" not in q:
         return {
             "query": state["query"],
             "response": "Do you mean an overcharge on your monthly bill or a one-time double charge?",
             "escalated": True,
-            "route": "clarify"
+            "route": "clarify",
+            "confidence": state.get("confidence", 0.0),
+            "route_history": state.get("route_history", []),
         }
-    else:
-        # Normal response using billing_faq
-        docs = billing_retriever.invoke(state["query"])
-        context = "\n".join([d.page_content for d in docs])
-        prompt = f"""
-        You are a billing specialist. Use the following FAQs to answer:
-
-        Context:
-        {context}
-
-        Question: {state["query"]}
-        """
-        reply = billing_agent.invoke(prompt).content
-        return {
-            "query": state["query"],
-            "response": reply,
-            "escalated": True,
-            "route": "end"
-        }
-     
-def clarify_node(state: EscalationState):
-    return {
-        "query": state["query"],
-        "response": state["response"],  # send specialist's clarifying question back to user
-        "escalated": True,
-        "route": "end",
-    }
-
-def tech_node(state: EscalationState):
-    q = state["query"].lower()
-    # Detect vague quety -> ask for clarification
-    if "app is not working" in q or "issue" in q or "problem" in q:
-        return {
-        "query": state["query"],
-        "response" : "Can you clarify the issue? Is the app crashing on startup, freezing during use, or not opening at all?",
-        "escalated": True,
-        "route": "clarify"
-        }
-    # Normal RAG response using tech_faq
-    user_query = state["query"]
-    docs = tech_retriever.invoke(user_query)
+    docs = billing_retriever.invoke(state["query"])
     context = "\n".join([d.page_content for d in docs])
-
     prompt = f"""
-    You are a technical support specialist.
-    Use the following tech FAQs to answer the question.
+    You are a billing specialist. Use the following FAQs to answer:
 
     Context:
     {context}
 
-    Question: {user_query}
+    Question: {state["query"]}
+    """
+    reply = billing_agent.invoke(prompt).content
+    state["response"] = reply
+    state["escalated"] = True
+    return state
+
+
+# Tech node
+def tech_node(state: EscalationState):
+    q = state["query"].lower()
+    if "app is not working" in q or "issue" in q or "problem" in q:
+        return {
+            "query": state["query"],
+            "response": "Can you clarify the issue? Is the app crashing, freezing, or not opening?",
+            "escalated": True,
+            "route": "clarify",
+            "confidence": state.get("confidence", 0.0),
+            "route_history": state.get("route_history", []),
+        }
+    docs = tech_retriever.invoke(state["query"])
+    context = "\n".join([d.page_content for d in docs])
+    prompt = f"""
+    You are a technical support specialist.
+    Use the following FAQs to answer the question.
+
+    Context:
+    {context}
+
+    Question: {state["query"]}
     """
     reply = tech_agent.invoke(prompt).content
     state["response"] = reply
+    state["escalated"] = True
     return state
 
+
+# General node
 def general_node(state: EscalationState):
-    """General specialist uses RAG over general_faq.txt"""
     user_query = state["query"]
     docs = general_retriever.invoke(user_query)
     context = "\n".join([d.page_content for d in docs])
-
     prompt = f"""
-    You are a general customer support specialist.
-    Use the following general FAQs to answer the question.
+    You are a general support specialist.
+    Use the following FAQs to answer:
 
     Context:
     {context}
@@ -190,7 +183,20 @@ def general_node(state: EscalationState):
     """
     reply = general_agent.invoke(prompt).content
     state["response"] = reply
+    state["escalated"] = True
     return state
+
+
+# Clarify node
+def clarify_node(state: EscalationState):
+    return {
+        "query": state["query"],
+        "response": state.get("response", "Could you clarify your issue?"),
+        "escalated": True,
+        "route": "clarify",
+        "confidence": state.get("confidence", 0.0),
+        "route_history": state.get("route_history", []),
+    }
 
 ## Build LangGraph Workflow
 graph = StateGraph(EscalationState)
@@ -208,14 +214,21 @@ graph.set_entry_point("frontline")
 # Routing from frontline to router
 graph.add_edge("frontline", "router")
 
+# Router → next agent (with confidence filter)
+def _router_decision(state: EscalationState):
+    route = state["route"]
+    conf = state.get("confidence", 0.0)
+    if route in {"billing", "tech", "general"} and conf >= 0.6:
+        return route
+    return "clarify"
+
 graph.add_conditional_edges(
     "router",
-    lambda state: state["route"],
-    {"billing": "billing", "tech": "tech", "general": "general", "clarify": "clarify"},
+    _router_decision,
+    {"billing": "billing", "tech": "tech", "general": "general", "clarify": "clarify"}
 )
 
-graph.add_edge("billing", "clarify")  # billing can loop to clarify
-graph.add_edge("tech", "clarify")
+# Teminal edges
 graph.add_edge("billing", END)
 graph.add_edge("tech", END)
 graph.add_edge("general", END)
@@ -227,5 +240,15 @@ app = graph.compile()
 # Run the Bot
 if __name__ == "__main__":
     query = input("User: ")
-    result = app.invoke({"query": query, "response": "", "escalated": False, "route": ""})
+    result = app.invoke({
+        "query": query,
+        "response": "",
+        "escalated": False,
+        "route": "",
+        "confidence": 0.0,
+        "route_history": []
+    })
     print("Bot:", result["response"])
+    print("Route chosen:", result["route"])
+    print("Confidence:", result["confidence"])
+    print("History:", result["route_history"])
