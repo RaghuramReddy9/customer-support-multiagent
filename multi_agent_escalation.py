@@ -8,6 +8,16 @@ from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
+import mlflow
+
+# configure MLflow
+mlflow.set_experiment("multi-agent-escalation-bot")
+
+# helper function
+def log_interaction(log_data:dict, log_file="logs/session_logs.jsonl"):
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    with open(log_file, "a", encoding="utf-8") as f:
+        f.write(json.dumps(log_data) + "\n")
 
 # Load Environment Variables
 load_dotenv()
@@ -22,6 +32,8 @@ class EscalationState(TypedDict):
     route: str        # which department handled the query
     confidence: float   # confidence score (if applicable)
     route_history: list[str]  # history of departments involved
+    handoff_summary: str  # short context for next agent
+    conversation_history: list[dict[str, str]]  # full chat history(store last few turns)
 
 ## Define Agents (Gemini models, explicit per role)
 
@@ -72,60 +84,76 @@ general_chunks = splitter.split_documents(general_loader.load())
 general_vectorstore = Chroma.from_documents(general_chunks, embedding=embeddings)
 general_retriever = general_vectorstore.as_retriever(search_kwargs={"k": 2})
 
+# format conversation history
+def format_history(history: list[dict[str, str]]) -> str:
+    if not history:
+        return ""
+    formatted = "\n".join([f"{turn['role'].capitalize()}: {turn['content']}" for turn in history[-5:]])
+    return f"Conversation so far:\n{formatted}\n" 
+
 # define frontline node function
 def frontline_node(state: EscalationState):
     user_query = state["query"]
     reply = frontline_agent.invoke(
-        f"You are a frontline customer support assistant. Greet the user and route their issue: {user_query}"
+        f"You are a frontline assistant. Greet the user and prepare to route their issue: {user_query}"
     ).content
     state["response"] = reply
+    # Update memory
+    state["conversation_history"].append({"role": "user", "content": user_query})
+    state["conversation_history"].append({"role": "bot", "content": reply})
     return state
 
-# Define Router Node with confidence + route history
+# Router with JSON enforcement + keyword fallback
 def router_node(state: EscalationState):
     user_query = state["query"]
 
     prompt = f"""
-    You are a strict routing agent. Classify the query into ONE of: billing, tech, general.
-    Return strict JSON with keys: route (string), confidence (0.0-1.0 float).
-    Only these routes are allowed.
+    You are a strict routing agent.
+    Classify the query into ONE of: billing, tech, general.
+    Respond ONLY with JSON in this exact format:
+
+    {{
+      "route": "billing|tech|general",
+      "confidence": 0.0-1.0
+    }}
 
     Query: {user_query}
-    JSON:
     """
     raw = router_agent.invoke(prompt).content
+
     try:
         data = json.loads(raw)
         route = data.get("route", "").strip().lower()
         conf = float(data.get("confidence", 0.0))
     except Exception:
-        route, conf = "clarify", 0.0
+        # Keyword fallback if JSON parsing fails
+        q = user_query.lower()
+        if any(word in q for word in ["bill", "charge", "payment", "invoice"]):
+            route, conf = "billing", 0.7
+        elif any(word in q for word in ["app", "error", "crash", "bug", "technical", "freeze"]):
+            route, conf = "tech", 0.7
+        else:
+            route, conf = "general", 0.6
 
     if route not in {"billing", "tech", "general"}:
-       route = "clarify"
+        route = "clarify"
 
-    # Save to state
     state["route"] = route
     state["confidence"] = conf
     state["route_history"] = (state.get("route_history") or []) + [route]
-    return state     
+    state["handoff_summary"] = f"User asked: '{user_query}'. Routed to {route} with confidence {conf:.2f}."
+    return state
 
-# Billing node
+# Billing specialist
 def billing_node(state: EscalationState):
-    q = state["query"].lower()
-    if "charge" in q and "double" not in q:
-        return {
-            "query": state["query"],
-            "response": "Do you mean an overcharge on your monthly bill or a one-time double charge?",
-            "escalated": True,
-            "route": "clarify",
-            "confidence": state.get("confidence", 0.0),
-            "route_history": state.get("route_history", []),
-        }
+    history = format_history(state["conversation_history"])
     docs = billing_retriever.invoke(state["query"])
     context = "\n".join([d.page_content for d in docs])
     prompt = f"""
-    You are a billing specialist. Use the following FAQs to answer:
+    {state.get("handoff_summary","")}
+    {history}
+
+    You are a billing specialist. Use the following FAQs to answer.
 
     Context:
     {context}
@@ -135,26 +163,21 @@ def billing_node(state: EscalationState):
     reply = billing_agent.invoke(prompt).content
     state["response"] = reply
     state["escalated"] = True
+    state["conversation_history"].append({"role": "user", "content": state["query"]})
+    state["conversation_history"].append({"role": "bot", "content": reply})
     return state
 
-
-# Tech node
+# Tech specialist
 def tech_node(state: EscalationState):
-    q = state["query"].lower()
-    if "app is not working" in q or "issue" in q or "problem" in q:
-        return {
-            "query": state["query"],
-            "response": "Can you clarify the issue? Is the app crashing, freezing, or not opening?",
-            "escalated": True,
-            "route": "clarify",
-            "confidence": state.get("confidence", 0.0),
-            "route_history": state.get("route_history", []),
-        }
+    history = format_history(state["conversation_history"])
     docs = tech_retriever.invoke(state["query"])
     context = "\n".join([d.page_content for d in docs])
     prompt = f"""
+    {state.get("handoff_summary","")}
+    {history}
+
     You are a technical support specialist.
-    Use the following FAQs to answer the question.
+    Use the following FAQs to answer.
 
     Context:
     {context}
@@ -164,39 +187,42 @@ def tech_node(state: EscalationState):
     reply = tech_agent.invoke(prompt).content
     state["response"] = reply
     state["escalated"] = True
+    state["conversation_history"].append({"role": "user", "content": state["query"]})
+    state["conversation_history"].append({"role": "bot", "content": reply})
     return state
 
-
-# General node
+# General specialist
 def general_node(state: EscalationState):
-    user_query = state["query"]
-    docs = general_retriever.invoke(user_query)
+    history = format_history(state["conversation_history"])
+    docs = general_retriever.invoke(state["query"])
     context = "\n".join([d.page_content for d in docs])
     prompt = f"""
+    {state.get("handoff_summary","")}
+    {history}
+
     You are a general support specialist.
-    Use the following FAQs to answer:
+    Use the following FAQs to answer.
 
     Context:
     {context}
 
-    Question: {user_query}
+    Question: {state["query"]}
     """
     reply = general_agent.invoke(prompt).content
     state["response"] = reply
     state["escalated"] = True
+    state["conversation_history"].append({"role": "user", "content": state["query"]})
+    state["conversation_history"].append({"role": "bot", "content": reply})
     return state
 
-
-# Clarify node
+# Clarify node (short + consistent)
 def clarify_node(state: EscalationState):
-    return {
-        "query": state["query"],
-        "response": state.get("response", "Could you clarify your issue?"),
-        "escalated": True,
-        "route": "clarify",
-        "confidence": state.get("confidence", 0.0),
-        "route_history": state.get("route_history", []),
-    }
+    reply = "Could you clarify your request so I can direct you to the right department?"
+    state["response"] = reply
+    state["escalated"] = True
+    state["conversation_history"].append({"role": "user", "content": state["query"]})
+    state["conversation_history"].append({"role": "bot", "content": reply})
+    return state
 
 ## Build LangGraph Workflow
 graph = StateGraph(EscalationState)
@@ -225,7 +251,7 @@ def _router_decision(state: EscalationState):
 graph.add_conditional_edges(
     "router",
     _router_decision,
-    {"billing": "billing", "tech": "tech", "general": "general", "clarify": "clarify"}
+    {"billing": "billing", "tech": "tech", "general": "general", "clarify": "clarify"},
 )
 
 # Teminal edges
@@ -246,9 +272,31 @@ if __name__ == "__main__":
         "escalated": False,
         "route": "",
         "confidence": 0.0,
-        "route_history": []
+        "route_history": [],
+        "handoff_summary": "",
+        "conversation_history": []
     })
+
     print("Bot:", result["response"])
     print("Route chosen:", result["route"])
     print("Confidence:", result["confidence"])
     print("History:", result["route_history"])
+    print("Conversation memory:", result["conversation_history"])
+
+    # Log interaction to MLflow
+    import mlflow, json, os
+
+    with mlflow.start_run():
+        mlflow.log_param("model_router", "gemini-2.0-flash-001")
+        mlflow.log_param("model_specialists", "gemini-2.0-flash-001")
+        mlflow.log_metric("confidence", result["confidence"])
+        mlflow.log_metric("query_length", len(result["query"]))
+        mlflow.log_metric("conversation_turns", len(result["conversation_history"]))
+
+        log_file_path = "logs/latest_conversation.json"
+        os.makedirs("logs", exist_ok=True)
+        with open(log_file_path, "w", encoding="utf-8") as f:
+            json.dump(result["conversation_history"], f, indent=2)
+        mlflow.log_artifact(log_file_path, artifact_path="conversations")
+
+    print("✅ Logged interaction to MLflow")

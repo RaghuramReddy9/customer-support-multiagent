@@ -1,9 +1,11 @@
-streamlit
-python-dotenv
-langchain
-langgraph
-langchain-community
+fastapi
+uvicorn
+langchain==0.2.14
+langgraph==0.2.35
 langchain-google-genai
 langchain-huggingface
+langchain-community
 chromadb
 sentence-transformers
+python-dotenv
+mlflow

@@ -1,156 +1,136 @@
-#  Customer Support Multi-Agent Chatbot
+#  Customer Support Multi-Agent Assistant
 
-A **multi-agent customer support assistant** built with **LangGraph, Gemini (Google GenAI), and Streamlit**.  
-The bot automatically **routes queries** to the correct specialist (Billing, Tech, or General FAQ) and provides answers grounded in real support documents using **RAG (Retrieval-Augmented Generation)**.
+A production-style **customer support AI assistant** that uses **multiple specialized agents** to solve user problems.  
+Instead of a single chatbot trying to answer everything, this system **routes each query to the right expert** — billing, technical support, or general inquiries.  
 
----
-
-<details>
-
-<summary> Features </summary>
-
--  **AI Router Agent** – classifies user queries into *Billing*, *Tech Support*, or *General*.
--  **RAG Specialists** – each department uses its own FAQ knowledge base:
-  - Billing → `billing_faq.txt`
-  - Tech Support → `tech_faq.txt`
-  - General FAQ → `general_faq.txt`
--  **LangGraph Workflow** – orchestrates the multi-agent escalation pipeline.
--  **Streamlit UI** – clean, chat-based interface with history.
--  **Environment Config** – secrets managed via `.env`.
-
-</details>
+It’s powered by **LangGraph + Gemini**, enhanced with **RAG knowledge bases**, and deployed as a **FastAPI microservice** running inside **Docker**.  
+For monitoring and real-world readiness, it’s integrated with **MLflow** and structured logging.
 
 ---
 
-<details>
+## 🌟 Highlights
 
-<summary> Architecture </summary>
+- **Agent Collaboration**
+  - Frontline agent greets and triages
+  - Router agent decides where to send the query
+  - Specialists (billing, tech, general) answer using department-specific knowledge
 
-• User → Frontline Agent → Router Agent (Gemini) → Specialist Agent (Billing / Tech / General) → Response
+- **Escalation & Clarify**
+  - Low-confidence routing falls back to clarification
+  - Short-term memory keeps context across clarifications
+  - Handoff summaries ensure smooth agent-to-agent transitions
 
-- **Frontline Agent** – greets users.  
-- **Router Agent** – powered by Gemini, decides which specialist to escalate to.  
-- **Specialist Agents** – provide grounded responses using **RAG** over department-specific FAQs.  
-- **Streamlit** – delivers a conversational interface.  
+- **Knowledge Integration (RAG)**
+  - Each department uses its own FAQ knowledge base
+  - Built with HuggingFace embeddings (`all-MiniLM-L6-v2`) + ChromaDB
 
-- **Clarification Flow**:  
-  - Billing Specialist asks if the user means “overcharge” vs “double charge”.  
-  - Tech Specialist asks if the app issue is a crash, freeze, or startup problem.  
-  - Makes the bot feel more human-like by handling vague queries before answering.
+- **Deployment Ready**
+  - REST API via FastAPI
+  - Swagger UI available at `/docs`
+  - Dockerized for portability across environments
 
-</details>
+- **Observability**
+  - JSONL logs for every query/response
+  - MLflow tracking (confidence scores, route history, artifacts)
 
 ---
 
-<details>
+##  Tech Stack
 
-<summary> Getting Started </summary>
+- **LLM**: Google Gemini (`gemini-2.0-flash-001`)
+- **Orchestration**: LangGraph + LangChain
+- **Embeddings**: HuggingFace Sentence Transformers
+- **Vector DB**: Chroma
+- **API Layer**: FastAPI + Uvicorn
+- **Deployment**: Docker
+- **Monitoring**: MLflow
 
-### 1. Clone the Repo
+---
+
+##  Quick Start
+
+### 1. Clone & Setup
 ```bash
-git clone https://github.com/RaghuramReddy9/customer-support-multiagent.git
-cd customer-support-multiagent
+git clone https://github.com/<your-username>/customer-support-bot.git
+cd customer-support-bot
 ```
-### 2. Create a Virtual Environment
+### 2.Environment
+Create a `.env` file with:
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Mac/Linux
-.venv\Scripts\activate      # Windows
+GOOGLE_API_KEY=your_api_key_here
 ```
-### 3. Install Dependencies
+### 3. Run Locally
 ```bash
 pip install -r requirements.txt
+python main.py
 ```
-### 4. Add API Key
-Create a .env file in the project root:
-```bash
-GOOGLE_API_KEY=your_gemini_api_key_here
-```
-### 5. Run the App
-```bash
-streamlit run app.py
-```
-App will be available at → http://localhost:8501
+→ Visit http://127.0.0.1:8000/docs
 
-</details>
+### 4. Run with Docker
+```bash
+docker build -t customer-support-bot .
+docker run -p 8000:8000 --env-file .env customer-support-bot
+```
 
 ---
 
-<details>
+##  Example Queries
+```bash
+--Billing: “I was charged twice on my card”
 
-<summary> Project Structure </summary>
+--Technical: “The app keeps freezing when I log in”
 
+--General: “How can I reset my password?”
+
+Each query is routed to the correct specialist agent with confidence scoring.
+```
+
+## Monitoring with MLflow
+```bash
+`mlflow ui`
+→ Open http://127.0.0.1:5000-- to track metrics, routes, and saved conversations.
+```
+
+## Project Layout
+```bash
 customer-support-multiagent/
-│── app.py                    # Streamlit UI
-│── multi_agent_escalation.py # LangGraph multi-agent workflow
-│── billing_faq.txt           # Billing knowledge base
-│── tech_faq.txt              # Tech support knowledge base
-│── general_faq.txt           # General FAQ knowledge base
-│── requirements.txt          # Dependencies
-│── Dockerfile                # For containerization
-│── assets/                   # Screenshots (used in README)
-│── README.md                 # Project overview
-│── .env                      # API keys (not committed)
-│── .gitignore                # Ignore venv, cache, .env, etc.
+│── main.py                  
+│── multi_agent_escalation.py 
+│── billing_faq.txt
+│── tech_faq.txt
+│── general_faq.txt
+│── requirements.txt
+│── Dockerfile
+│── logs/
+│    └── session_log.jsonl
+```
 
-</details>
+## Screenshots
 
----
+### FastAPI Swagger UI
+This shows the `/chat` endpoint in action.
+![Swagger UI Screenshot](assets/swagger.png)
 
-<details>
+### MLflow Dashboard
+Tracking confidence scores, routes, and conversation metrics.
+![MLflow Dashboard Screenshot](assets/mlflow.png)
 
-<summary> Screenshots </summary>
+### Docker Container Running the Service
+Proof of successful Docker deployment and API running on port 8000.
+![Docker Run Screenshot](assets/docker.png)
 
-![App Screenshot](assets/demo.png)
 
-</details>
 
----
+## Why This Project Matters
 
-<details>
+Customer support is one of the most common enterprise use-cases for Generative AI.
+This project demonstrates how to go beyond a single chatbot and build a system that feels closer to how real support teams operate — with specialized experts, routing, and observability
 
-<summary> Future Enhancements </summary>
-
-• Add Agent-to-Agent collaboration (specialists ask clarifying questions).
-
-• Deploy to Hugging Face Spaces / AWS with Docker.
-
-• Extend knowledge bases with real company docs.
-
-• Add analytics dashboard for routed queries (Billing vs Tech vs General).
-
-</details>
-
----
-
-<details>
-
-<summary> Tech Stack </summary>
-
-• LLM: Gemini 1.5 Flash (Google GenAI)
-
-• Framework: LangGraph + LangChain
-
-• Vector DB: Chroma + HuggingFace Embeddings
-
-• Frontend: Streamlit
-
-• Deployment: Docker-ready
-
-</details>
-
----
-
-<details>
-
-<summary> Author </summary>
-👤 Raghuramreddy Thirumalareddy
-
-• GitHub--> https://github.com/RaghuramReddy9
-
-• LinkedIn--> https://www.linkedin.com/in/raghuramreddy-ai
-
-</details>
-
+## Author
+```bash
+Raghuramreddy Thirumalareddy
+```
+**Github** -- https://github.com/RaghuramReddy9
+**Linkdin** -- https://www.linkedin.com/in/raghuramreddy-ai
 
 
